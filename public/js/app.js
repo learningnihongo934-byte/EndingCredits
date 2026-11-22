@@ -1,5 +1,5 @@
 import { loadData } from './data.js';
-import { dayNumber, dailySong, filterSongs, pickRamp, rng } from './pools.js';
+import { dayNumber, dailySong, filterSongs, levelPool, pickFor, rng } from './pools.js';
 import { $, esc, heardle, credits, squares, toast, STAGES } from './ui.js';
 import { clip } from './player.js';
 import * as store from './store.js';
@@ -23,13 +23,14 @@ function help() {
   d.innerHTML = `<form method="dialog" class="dlg">
     <h2>How to play</h2>
     <p>Press play to hear the first second of an anime opening or ending. Name <b>the anime</b> (any season counts) <b>or the song</b>.</p>
+    <p>Endless and Rooms also have <b>J-Pop</b> hits like Lemon and Bunny Girl. For those, name the song. Typing an artist lists their songs.</p>
     <p>Every wrong guess or skip unlocks more of the clip: 1s, 2s, 4s, 7s, 11s, then 16s. Six tries in all.</p>
     <dl class="modes">
       <dt>Daily</dt><dd>One song a day, the same for everyone. Share your squares.</dd>
       <dt>Endless</dt><dd>Three lives. A song you miss costs one. Songs get harder as you go.</dd>
       <dt>Rooms</dt><dd>Up to 8 friends hear the same clip at once. Faster right answers score more.</dd>
     </dl>
-    <p class="muted small">Clips are official Apple Music previews. Song data from AnisongDB and AniList.</p>
+    <p class="muted small">Clips are official Apple Music and Deezer previews. Song data from AnisongDB, AniList and kworb.</p>
     <button class="btn primary">Got it</button></form>`;
   d.showModal();
 }
@@ -128,19 +129,21 @@ function record(n, r) {
 // ---------- Endless ----------
 const PTS = [6, 5, 4, 3, 2, 1];
 function endless(D) {
-  const f = store.get('endlessFilters', { type: 'both', era: 'any' });
-  const bestKey = () => `best.${f.type}.${f.era}`;
+  const f = { type: 'all', era: 'any', level: 'normal', ...store.get('endlessFilters', {}) };
+  if (f.type === 'both') f.type = 'anime';
+  const bestKey = () => `best.${f.type}.${f.era}${f.level === 'normal' ? '' : '.' + f.level}`;
   const seg = (name, opts) => `<div class="seg" role="radiogroup" data-k="${name}">${opts.map(([v, l]) => `<button type="button" role="radio" data-v="${v}" aria-checked="${f[name] === v}">${l}</button>`).join('')}</div>`;
   view.innerHTML = `<section class="page">
     <header class="page-head"><p class="kicker">Three lives</p><h1>Endless</h1></header>
     <div class="setup">
-      <label class="field"><span>Songs</span>${seg('type', [['both', 'Both'], ['OP', 'Openings'], ['ED', 'Endings']])}</label>
+      <label class="field"><span>Level</span>${seg('level', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</label>
+      <label class="field"><span>Songs</span>${seg('type', [['all', 'All'], ['anime', 'Anime'], ['OP', 'Openings'], ['ED', 'Endings'], ['JP', 'J-Pop']])}</label>
       <label class="field"><span>Era</span>${seg('era', [['any', 'Any'], ['2020s', '2020s'], ['2010s', '2010s'], ['2000s', '2000s'], ['older', '90s & older']])}</label>
       <p class="pool muted small"></p>
       <button class="btn primary big go">Start</button>
     </div></section>`;
   const poolInfo = () => {
-    const n = filterSongs(D.songs, f).length;
+    const n = levelPool(filterSongs(D.songs, f), f.level).length;
     $('.pool', view).innerHTML = `${n.toLocaleString()} songs in this pool · best score <b>${store.get(bestKey(), 0)}</b>`;
     $('.go', view).disabled = n < 5;
   };
@@ -156,7 +159,7 @@ function endless(D) {
   $('.go', view).onclick = () => run();
 
   function run() {
-    const pool = filterSongs(D.songs, f);
+    const pool = levelPool(filterSongs(D.songs, f), f.level);
     const g = { lives: 3, score: 0, round: 0, used: new Set(), r: rng((Math.random() * 2 ** 31) | 0), streak: 0 };
     view.innerHTML = `<section class="page">
       <header class="hud"><div><span class="muted">Round</span> <b class="h-round">1</b></div>
@@ -170,7 +173,7 @@ function endless(D) {
       $('.lives', view).innerHTML = [0, 1, 2].map((i) => `<i class="${i < g.lives ? 'on' : ''}"></i>`).join('');
     };
     const next = () => {
-      const song = pickRamp(pool, g.round, g.used, g.r);
+      const song = pickFor(pool, f.level, g.round, g.used, g.r);
       if (!song) return over(true);
       g.used.add(song.id);
       g.round++;

@@ -6,7 +6,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 export const STAGES = [1, 2, 4, 7, 11, 16];
 const MAX = STAGES[STAGES.length - 1];
 export const fmt = (t) => `0:${String(Math.floor(t)).padStart(2, '0')}`;
-export const typeName = (s) => (s.type === 'OP' ? 'Opening' : 'Ending');
+export const typeName = (s) => (s.type === 'OP' ? 'Opening' : s.type === 'ED' ? 'Ending' : 'J-Pop');
 
 const ICON = {
   play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>',
@@ -144,20 +144,24 @@ export function credits(el, song, { result = '', compact = false } = {}) {
     ${result ? `<p class="cr-result">${result}</p>` : ''}
     <div class="cr-cover">${song.cover ? `<img src="${esc(song.cover)}" alt="" loading="lazy">` : ''}
       <button class="cr-play" aria-label="Play the full clip">${ICON.play}</button></div>
-    <div class="cr-roll">
+    <div class="cr-roll">${song.type === 'JP' ? `
+      <p class="cr-label">J-Pop</p>
+      <h2 class="cr-title">${esc(song.song)}</h2>
+      ${song.alt?.length ? `<p class="cr-romaji">${esc(song.alt.join(' · '))}</p>` : ''}
+      <p class="cr-label">Performed by</p><p class="cr-song">${esc(song.artist)}</p>` : `
       <p class="cr-label">${typeName(song)} theme${song.n > 1 ? ` ${song.n}` : ''}</p>
       <h2 class="cr-title">${esc(song.anime)}</h2>
       ${song.romaji && song.romaji !== song.anime ? `<p class="cr-romaji">${esc(song.romaji)}</p>` : ''}
       <p class="cr-label">Song</p><p class="cr-song">${esc(song.song)}</p>
-      <p class="cr-label">Performed by</p><p class="cr-name">${esc(song.artist)}</p>
+      <p class="cr-label">Performed by</p><p class="cr-name">${esc(song.artist)}</p>`}
       <div class="cr-pair">
         ${song.studio ? `<div><p class="cr-label">Studio</p><p class="cr-name">${esc(song.studio)}</p></div>` : ''}
         ${song.year ? `<div><p class="cr-label">Year</p><p class="cr-name">${song.year}</p></div>` : ''}
       </div>
     </div>
-    ${compact ? '' : `<div class="cr-video"><button class="btn watch">Watch the ${typeName(song).toLowerCase()}</button></div>`}
+    ${compact ? '' : `<div class="cr-video"><button class="btn watch">Watch the ${song.type === 'JP' ? 'music video' : typeName(song).toLowerCase()}</button></div>`}
     <div class="cr-links">
-      ${song.apple ? `<a href="${esc(song.apple)}" target="_blank" rel="noopener">Apple Music</a>` : ''}
+      ${song.link ? `<a href="${esc(song.link)}" target="_blank" rel="noopener">${song.src === 'deezer' ? 'Deezer' : 'Apple Music'}</a>` : ''}
       <a class="yt-link" href="https://www.youtube.com/results?search_query=${encodeURIComponent(ytQuery(song))}" target="_blank" rel="noopener">YouTube</a>
     </div>
   </article>`;
@@ -170,7 +174,7 @@ export function credits(el, song, { result = '', compact = false } = {}) {
   if (w) w.onclick = () => watch(el.querySelector('.cr-video'), song);
 }
 
-const ytQuery = (s) => `${s.romaji || s.anime} ${s.type === 'OP' ? 'opening' : 'ending'} ${s.n} ${s.song}`;
+const ytQuery = (s) => (s.type === 'JP' ? `${s.artist} ${s.alt?.[0] || s.song} MV` : `${s.romaji || s.anime} ${s.type === 'OP' ? 'opening' : 'ending'} ${s.n} ${s.song}`);
 
 async function watch(box, song) {
   box.innerHTML = '<div class="yt-frame loading">Finding the video…</div>';

@@ -1,7 +1,7 @@
 // Ending Credits Worker: static site + YouTube lookup for the reveal + multiplayer rooms (Durable Object).
 import data from '../public/data/songs.json';
 import { isCorrect } from '../public/js/match.js';
-import { filterSongs, pickRamp, rng } from '../public/js/pools.js';
+import { filterSongs, levelPool, pickFor, rng, TYPES, LEVELS } from '../public/js/pools.js';
 
 const json = (o, status = 200, extra = {}) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json', ...extra } });
 
@@ -9,6 +9,8 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (url.pathname === '/api/yt') return yt((url.searchParams.get('q') || '').slice(0, 200), ctx);
+    const pv = url.pathname.match(/^\/api\/preview\/(\d{1,15})$/);
+    if (pv) return preview(pv[1], ctx);
     if (url.pathname === '/api/room/new') {
       const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => A[b % A.length]).join('');
@@ -23,6 +25,22 @@ export default {
     return env.ASSETS.fetch(req);
   },
 };
+
+// ---------- Deezer previews: links expire after ~15 min, so look one up per play ----------
+async function preview(id, ctx) {
+  const cache = caches.default;
+  const key = new Request('https://cache.endingcredits/preview/' + id);
+  let link = (await cache.match(key))?.headers.get('x-preview');
+  if (!link) {
+    try {
+      const r = await fetch('https://api.deezer.com/track/' + id);
+      link = (await r.json()).preview;
+    } catch {}
+    if (!link) return json({ error: 'no preview' }, 404);
+    ctx.waitUntil(cache.put(key, new Response('', { headers: { 'x-preview': link, 'cache-control': 'public, max-age=480' } })));
+  }
+  return new Response(null, { status: 302, headers: { location: link, 'cache-control': 'private, max-age=300' } });
+}
 
 // ---------- YouTube: find the opening's video for the reveal ----------
 async function yt(q, ctx) {
@@ -77,7 +95,7 @@ export class Room {
     this.players = new Map(); // id -> { id, name, ws, score, got, gotAt, last, lock }
     this.host = null;
     this.phase = 'lobby';
-    this.settings = { rounds: 10, type: 'both', era: 'any' };
+    this.settings = { rounds: 10, type: 'all', era: 'any', level: 'normal' };
     this.round = 0;
     this.song = null;
     this.used = new Set();
@@ -126,12 +144,13 @@ export class Room {
 
     if (m.t === 'settings' && isHost && this.phase !== 'round' && this.phase !== 'reveal') {
       const rounds = [5, 10, 15, 20].includes(+m.rounds) ? +m.rounds : this.settings.rounds;
-      const type = ['both', 'OP', 'ED'].includes(m.type) ? m.type : this.settings.type;
+      const type = TYPES.includes(m.type) ? m.type : this.settings.type;
       const era = ['any', '2020s', '2010s', '2000s', 'older'].includes(m.era) ? m.era : this.settings.era;
-      this.settings = { rounds, type, era };
+      const level = LEVELS.includes(m.level) ? m.level : this.settings.level;
+      this.settings = { rounds, type, era, level };
       this.sync();
     } else if (m.t === 'start' && isHost && (this.phase === 'lobby' || this.phase === 'over')) {
-      this.pool = filterSongs(data.songs, this.settings);
+      this.pool = levelPool(filterSongs(data.songs, this.settings), this.settings.level);
       if (this.pool.length < this.settings.rounds) return this.send(ws, { t: 'error', msg: 'Not enough songs for those settings.' });
       for (const q of this.players.values()) { q.score = 0; q.got = false; q.last = 0; }
       this.round = 0;
@@ -164,7 +183,7 @@ export class Room {
   }
 
   nextRound() {
-    const s = pickRamp(this.pool, this.round + 2, this.used, this.r);
+    const s = pickFor(this.pool, this.settings.level, this.round + 2, this.used, this.r);
     if (!s) return this.finish();
     this.round++;
     this.song = s;

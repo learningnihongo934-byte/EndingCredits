@@ -110,8 +110,9 @@ function connect(view, D, code, name) {
     const el = $('.settings', stage);
     if (!el) return;
     el.innerHTML = `
+      <label class="field"><span>Level</span>${seg('level', [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']])}</label>
       <label class="field"><span>Rounds</span>${seg('rounds', [[5, '5'], [10, '10'], [15, '15'], [20, '20']])}</label>
-      <label class="field"><span>Songs</span>${seg('type', [['both', 'Both'], ['OP', 'Openings'], ['ED', 'Endings']])}</label>
+      <label class="field"><span>Songs</span>${seg('type', [['all', 'All'], ['anime', 'Anime'], ['OP', 'Openings'], ['ED', 'Endings'], ['JP', 'J-Pop']])}</label>
       <label class="field"><span>Era</span>${seg('era', [['any', 'Any'], ['2020s', '2020s'], ['2010s', '2010s'], ['2000s', '2000s'], ['older', 'Older']])}</label>`;
     el.onclick = (e) => {
       const b = e.target.closest('button');

@@ -5,9 +5,13 @@ export const ease = (s) => s.diff + Math.min(30, s.pop / 30000);
 
 export const ERAS = { any: [0, 9999], '2020s': [2020, 9999], '2010s': [2010, 2019], '2000s': [2000, 2009], older: [1, 1999] };
 
-export function filterSongs(songs, { type = 'both', era = 'any' } = {}) {
+// type: 'all' | 'anime' (OP + ED) | 'OP' | 'ED' | 'JP'. Old saves used 'both' for anime.
+export const TYPES = ['all', 'anime', 'OP', 'ED', 'JP'];
+export function filterSongs(songs, { type = 'all', era = 'any' } = {}) {
+  if (type === 'both') type = 'anime';
   const [a, b] = ERAS[era] || ERAS.any;
-  return songs.filter((s) => (type === 'both' || s.type === type) && (era === 'any' || ((s.year || 0) >= a && (s.year || 0) <= b)));
+  const typeOk = (s) => type === 'all' || (type === 'anime' ? s.type !== 'JP' : s.type === type);
+  return songs.filter((s) => typeOk(s) && (era === 'any' || ((s.year || 0) >= a && (s.year || 0) <= b)));
 }
 
 export function rng(seed) {
@@ -39,6 +43,25 @@ export function pickRamp(pool, round, used, r) {
   return c.length ? c[Math.floor(r() * c.length)] : null;
 }
 
+// ---- Levels ----
+// Easy = the best-known third, Hard = the lesser-known half, Normal = everything with a ramp.
+// Anime and J-pop are ranked separately so every level keeps both.
+export const LEVELS = ['easy', 'normal', 'hard'];
+export function levelPool(pool, level = 'normal') {
+  if (level !== 'easy' && level !== 'hard') return pool;
+  const out = [];
+  for (const group of [pool.filter((s) => s.type === 'JP'), pool.filter((s) => s.type !== 'JP')]) {
+    const g = group.slice().sort((a, b) => ease(b) - ease(a));
+    out.push(...(level === 'easy' ? g.slice(0, Math.ceil(g.length / 3)) : g.slice(Math.floor(g.length / 2))));
+  }
+  return out;
+}
+export function pickFor(pool, level, round, used, r) {
+  if (level !== 'easy' && level !== 'hard') return pickRamp(pool, round, used, r);
+  const c = pool.filter((s) => !used.has(s.id));
+  return c.length ? c[Math.floor(r() * c.length)] : null;
+}
+
 // ---- Daily ----
 const EPOCH = Date.UTC(2026, 10, 22); // Daily #1 = 22 Nov 2026
 export function dayNumber(d = new Date()) {
@@ -49,7 +72,7 @@ let dailyOrder = null;
 export function dailySong(D, n) {
   if (!dailyOrder) {
     const pool = D.songs
-      .filter((s) => (s.type === 'OP' ? ease(s) >= 70 : ease(s) >= 85))
+      .filter((s) => (s.type === 'OP' ? ease(s) >= 70 : s.type === 'ED' && ease(s) >= 85))
       .sort((a, b) => (a.song + a.artist < b.song + b.artist ? -1 : 1));
     dailyOrder = shuffled(pool, rng(hash('ending-credits-daily')));
   }

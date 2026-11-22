@@ -36,14 +36,15 @@ export function isCorrect(D, song, guess) {
   if (guess.kind === 'anime' && Number.isInteger(guess.f)) return guess.f === song.f;
   const g = norm(guess.text);
   if (!g) return false;
-  const title = norm(song.song);
-  if (g === title) return true;
+  const titles = [song.song, ...(song.alt || [])].map(norm).filter(Boolean);
+  if (titles.includes(g)) return true;
   if (guess.kind === 'song') return false;
-  const ks = keysFor(D, song);
+  // J-pop songs have no anime: only the title counts.
+  const ks = song.type === 'JP' ? new Set() : keysFor(D, song);
   if (ks.has(g)) return true;
   if (g.length >= 5) {
     const tol = g.length >= 12 ? 2 : 1;
-    for (const k of [...ks, title]) if (lev(g, k) <= tol) return true;
+    for (const k of [...ks, ...titles]) if (lev(g, k) <= tol) return true;
   }
   return false;
 }
@@ -56,7 +57,8 @@ export function buildIndex(D) {
     const k = norm(s.song);
     if (seen.has(k)) continue;
     seen.add(k);
-    items.push({ kind: 'song', label: s.song, sub: s.artist, keys: [s.song.toLowerCase()] });
+    // Song titles (and their Japanese / romaji forms) are searchable by artist too.
+    items.push({ kind: 'song', label: s.song, sub: s.artist, keys: [s.song, ...(s.alt || []), s.artist].map((x) => x.toLowerCase()) });
   }
   return items;
 }
@@ -76,5 +78,5 @@ export function search(items, q, limit = 8) {
     if (best > 0) out.push({ it, best, hit });
   }
   out.sort((a, b) => b.best - a.best); // stable: franchises stay in popularity order
-  return out.slice(0, limit).map(({ it, hit }) => ({ ...it, alt: hit !== it.label.toLowerCase() ? hit : '' }));
+  return out.slice(0, limit).map(({ it, hit }) => ({ ...it, alt: hit !== it.label.toLowerCase() && hit !== (it.sub || '').toLowerCase() ? hit : '' }));
 }

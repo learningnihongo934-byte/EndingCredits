@@ -14,10 +14,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, 'tools', 'cache')
 OUT = os.path.join(ROOT, 'public', 'data', 'songs.json')
 os.makedirs(CACHE, exist_ok=True)
-UA = 'EndingCredits-data/1.0'
+UA = 'Mozilla/5.0 (compatible; EndingCredits-songlist/2.0; +https://endingcredits.rennko.tech)'
 
 
-def http(url, body=None, tries=6):
+def http(url, body=None, tries=9):
     data = json.dumps(body).encode() if body is not None else None
     for i in range(tries):
         req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': UA})
@@ -25,7 +25,8 @@ def http(url, body=None, tries=6):
             with urllib.request.urlopen(req, timeout=40) as r:
                 return json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
-            wait = 65 if e.code in (403, 429) else 5 * (i + 1)
+            # Apple answers 403/429 when throttling; back off harder each time (15 s ... 8 min).
+            wait = min(480, 15 * 2 ** i) if e.code in (403, 429) else 5 * (i + 1)
             print(f'  http {e.code} on {url[:70]}... waiting {wait}s', flush=True)
             time.sleep(wait)
         except Exception as e:
@@ -101,6 +102,9 @@ def norm(s):
 BAD = re.compile(r'instrumental|off ?vocal|karaoke|remix|first take|acoustic|live|cover|inst\.|カラオケ|オフボーカル|english ver|piano', re.I)
 
 
+ALT_VER = re.compile(r'orchestra|arrange|replica|club mix|\bmix\b|remaster|demo|version|\bver\.|self[- ]cover|sped up|slowed|nightcore|\b8d\b', re.I)
+
+
 def artist_ok(want, got):
     a, b = norm(want), norm(got)
     if not a or not b:
@@ -138,28 +142,57 @@ def itunes_pick(song, artist, results, store):
     return best[1] if best else None
 
 
-def itunes(songs, limit):
-    cache = load('itunes.json', {})
-    todo = [s for s in songs if s['key'] not in cache][:limit]
-    print(f'itunes: {len(todo)} to look up ({len(cache)} cached)', flush=True)
+def dz_pick(song, artist, results):
+    """Deezer result for this song: same title (or a kanji query whose artist matches near the top)."""
+    want = norm(re.sub(r'\s*[-–(（].*$', '', song) or song)
+    kanji = bool(re.search('[\u3040-\u30ff\u4e00-\u9fff]', song))
+    best = None
+    for rank, r in enumerate(results):
+        name = r.get('title') or ''
+        if not r.get('preview') or BAD.search(name) or BAD.search((r.get('album') or {}).get('title') or ''):
+            continue
+        if ALT_VER.search(name) and 'tv' not in name.lower():
+            continue                              # arrangements, replicas, club mixes (TV size is fine)
+        if not artist_ok(artist, (r.get('artist') or {}).get('name', '')):
+            continue
+        got = norm(r.get('title_short') or name)
+        score = 3 if got == want else 2 if want and got and (got.startswith(want) or want.startswith(got)) else 1 if kanji and rank <= 1 else 0
+        if 'tv' in name.lower() and score >= 2:
+            score += 0.5                          # TV size = the version that actually aired
+        if score and (not best or score > best[0]):
+            best = (score, r)
+    return best[1] if best else None
+
+
+def deezer(song, artist):
+    res = http('https://api.deezer.com/search?' + urllib.parse.urlencode({'q': f'{song} {artist}', 'limit': 15})).get('data', [])
+    time.sleep(0.25)                              # Deezer allows 50 requests per 5 s; stay well under
+    r = dz_pick(song, artist, res)
+    if not r:
+        return None
+    return {'dz': r['id'], 't': r.get('title'), 'ar': (r.get('artist') or {}).get('name'), 'c': (r.get('album') or {}).get('cover_xl') or '', 'u': r.get('link', '')}
+
+
+def previews(songs, limit):
+    """Apple hits from earlier runs are kept; everything else is looked up on Deezer."""
+    apple = load('itunes.json', {})
+    dz = load('deezer.json', {})
+    todo = [s for s in songs if not apple.get(s['key']) and s['key'] not in dz][:limit]
+    print(f'deezer: {len(todo)} to look up', flush=True)
     for n, s in enumerate(todo):
-        hit = None
-        for store in ('US', 'JP'):
-            term = f"{s['song']} {s['artist']}"
-            url = 'https://itunes.apple.com/search?' + urllib.parse.urlencode({'term': term, 'media': 'music', 'entity': 'song', 'limit': 15, 'country': store, 'lang': 'en_us'})
-            res = http(url).get('results', [])
-            time.sleep(1.7)                       # Apple throttles bursts; http() backs off 65 s on 403
-            r = itunes_pick(s['song'], s['artist'], res, store)
-            if r:
-                hit = {'p': r['previewUrl'], 'a': r.get('artworkUrl100', '').replace('100x100bb', '300x300bb'), 't': r.get('trackName'), 'u': r.get('trackViewUrl', '').split('?')[0], 's': store}
-                break
-        cache[s['key']] = hit
-        if n % 10 == 9:
-            save('itunes.json', cache)
-            ok = sum(1 for v in cache.values() if v)
-            print(f'itunes {n + 1}/{len(todo)}  matched so far {ok}', flush=True)
-    save('itunes.json', cache)
-    return cache
+        dz[s['key']] = deezer(s['song'], s['artist'])
+        if n % 25 == 24:
+            save('deezer.json', dz)
+            print(f'deezer {n + 1}/{len(todo)}  matched {sum(1 for v in dz.values() if v)}', flush=True)
+    save('deezer.json', dz)
+    out = {}
+    for s in songs:
+        a, d = apple.get(s['key']), dz.get(s['key'])
+        if a:
+            out[s['key']] = {'p': a['p'], 'u': a['u'], 'src': 'apple'}
+        elif d:
+            out[s['key']] = {'p': f"/api/preview/{d['dz']}", 'u': d['u'], 'src': 'deezer'}
+    return out
 
 
 # ---------- franchises ----------
@@ -193,7 +226,7 @@ def short_title(t):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--anime', type=int, default=900)
-    ap.add_argument('--itunes-max', type=int, default=4000)
+    ap.add_argument('--itunes-max', type=int, default=4000)   # max new preview lookups (Deezer)
     a = ap.parse_args()
 
     anime = anilist(a.anime)
@@ -231,7 +264,7 @@ def main():
     songs.sort(key=lambda s: s['rank'] * (1 if s['type'].startswith('Opening') else 1.6) - s['diff'] * 4)
     print(f'{len(songs)} candidate songs', flush=True)
 
-    hits = itunes(songs, a.itunes_max)
+    hits = previews(songs, a.itunes_max)
 
     out = []
     for s in songs:
@@ -257,10 +290,13 @@ def main():
             'diff': round(s['diff'], 1),
             'pop': m['popularity'],
             'preview': h['p'],
-            'art': h['a'],
-            'apple': h['u'],
+            'link': h['u'],
+            'src': h['src'],
         })
-    used = sorted({s['f'] for s in out})
+    # Popular Japanese songs from tools/build-jpop.py (no anime: f = -1, answer is the title).
+    for j in load('jpop.json', []):
+        out.append({'id': len(out), 'f': -1, 'anime': '', 'romaji': '', 'n': 1, 'studio': '', 'color': '', 'pop': 0, **j})
+    used = sorted({s['f'] for s in out if s['f'] >= 0})
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     json.dump({'built': time.strftime('%Y-%m-%d'), 'franchises': fr_out, 'songs': out}, open(OUT, 'w'), ensure_ascii=False, separators=(',', ':'))
     print(f'wrote {len(out)} songs from {len(used)} franchises -> {OUT}')

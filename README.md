@@ -8,7 +8,7 @@ Guess the anime opening or ending from a one-second clip. Every wrong guess or s
 - **Endless:** three lives. Songs get harder as you go. Filter by openings or endings and by era.
 - **Rooms:** up to 8 friends hear the same clip at once. Faster right answers score more.
 
-Clips are official 30-second Apple Music previews. After each round the reveal rolls the credits (anime, song, artist, studio, year) and can pull up the YouTube video.
+Clips are official 30-second Apple Music and Deezer previews (Deezer links expire, so the Worker looks one up per play at `/api/preview/ID`). J-pop songs come from kworb's all-time Spotify Japan chart plus a seed list. After each round the reveal rolls the credits (anime, song, artist, studio, year) and can pull up the YouTube video.
 
 ## How it works
 
